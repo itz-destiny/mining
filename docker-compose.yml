@@ -1,0 +1,10 @@
+version: '3.8'
+services:
+  mining-backend:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - MINING_SERVER_API_KEY=change_this_server_api_key
+    volumes:
+      - ./backend/data:/app/data

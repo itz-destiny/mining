@@ -1,0 +1,8 @@
+{
+  "name": "Mining PWA Example",
+  "short_name": "MiningPWA",
+  "start_url": "/index.html",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "description": "Mining PWA demo (testnet)"
+}

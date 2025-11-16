@@ -1,0 +1,50 @@
+<!doctype html>
+<html>
+  <head>
+<link rel="manifest" href="/static/manifest.json">
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Mining PWA - Example (Testnet)</title>
+  </head>
+  <body>
+    <h1>Mining PWA — Example Frontend (Testnet)</h1>
+    <div>
+      <p>Hashrate: <span id="hashrate">—</span></p>
+      <p>Balance (BTC): <span id="balance">—</span></p>
+      <button id="startBtn">Start</button>
+      <button id="stopBtn">Stop</button>
+    </div>
+
+    <h2>Withdraw</h2>
+    <form id="withdrawForm">
+      <label>To address (testnet): <input id="toAddress" required></label><br>
+      <label>Amount (BTC): <input id="amount" required type="number" step="0.00000001"></label><br>
+      <button type="submit">Request Withdraw</button>
+    </form>
+
+    <script src="/static/app.js"></script>
+  
+<script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/static/service-worker.js').then(function(){ console.log('sw registered'); });
+  }
+  // Install prompt handling (simple)
+  let deferredPrompt;
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    const btn = document.createElement('button');
+    btn.textContent = 'Install App';
+    btn.onclick = async () => {
+      if (deferredPrompt) {
+        deferredPrompt.prompt();
+        const choice = await deferredPrompt.userChoice;
+        console.log('User choice', choice);
+      }
+    };
+    document.body.insertBefore(btn, document.body.firstChild);
+  });
+</script>
+
+</body>
+</html>

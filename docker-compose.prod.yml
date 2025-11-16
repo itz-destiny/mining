@@ -1,0 +1,28 @@
+
+version: '3.8'
+services:
+  mining-backend:
+    build: .
+    environment:
+      - MINING_SERVER_API_KEY=${MINING_SERVER_API_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - REPORT_SHARED_SECRET=${REPORT_SHARED_SECRET}
+      - MINING_PAYOUT_RATE_PER_SHARE=${MINING_PAYOUT_RATE_PER_SHARE}
+    volumes:
+      - ./backend/data:/app/data
+    networks:
+      - webnet
+  nginx:
+    image: nginx:stable
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/certs:/etc/letsencrypt
+    networks:
+      - webnet
+
+networks:
+  webnet:
+    driver: bridge

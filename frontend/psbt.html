@@ -1,0 +1,53 @@
+<!doctype html>
+<html>
+  <head><meta charset="utf-8"><title>PSBT Viewer</title></head>
+  <body>
+    <h1>PSBTs</h1>
+    <label>Server API Key: <input id="apiKey" placeholder="server api key"></label>
+    <button id="loadPsbtList">Load PSBT List</button>
+    <ul id="psbts"></ul>
+    <div id="viewer"></div>
+    <script>
+      document.getElementById('loadPsbtList').onclick = async function() {
+        const key = document.getElementById('apiKey').value;
+        const resp = await fetch('/api/admin/psbts', {headers: {'X-API-KEY': key}});
+        const j = await resp.json();
+        const ul = document.getElementById('psbts');
+        ul.innerHTML = '';
+        if (j.ok) {
+          for (const p of j.psbts) {
+            const li = document.createElement('li');
+            li.textContent = `${p.created_at} | ${p.id} | ${p.status} | tx=${p.txid}`;
+            const btn = document.createElement('button');
+            btn.textContent = 'View';
+            btn.onclick = async () => {
+              const resp2 = await fetch('/api/admin/get_psbt/' + p.id, {headers: {'X-API-KEY': key}});
+              const j2 = await resp2.json();
+              if (j2.ok) {
+                // show base64 psbt and provide download
+                const pre = document.createElement('pre');
+                pre.textContent = j2.psbt;
+                const dl = document.createElement('a');
+                const blob = new Blob([j2.psbt], {type: 'text/plain'});
+                dl.href = URL.createObjectURL(blob);
+                dl.download = p.id + '.psbt.txt';
+                dl.textContent = 'Download PSBT';
+                const viewer = document.getElementById('viewer');
+                viewer.innerHTML = '';
+                viewer.appendChild(pre);
+                viewer.appendChild(document.createElement('br'));
+                viewer.appendChild(dl);
+              } else {
+                alert('error fetching psbt');
+              }
+            };
+            li.appendChild(btn);
+            ul.appendChild(li);
+          }
+        } else {
+          alert('error');
+        }
+      };
+    </script>
+  </body>
+</html>

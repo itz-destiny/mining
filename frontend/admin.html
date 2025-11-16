@@ -1,0 +1,94 @@
+<!doctype html>
+<html>
+  <head>
+<link rel="manifest" href="/static/manifest.json"><meta charset="utf-8"/><title>Admin - Mining PWA</title></head>
+  <body>
+    <h1>Admin Interface</h1>
+<p><a href="/psbt.html">PSBT Viewer</a></p>
+    <div>
+      <label>Server API Key: <input id="apiKey" placeholder="change_this_server_api_key"></label>
+      <button id="getToken">Get Token</button>
+    </div>
+    <h2>Withdrawals</h2>
+    <ul id="withdrawals"></ul>
+    <script>
+      async function getToken() {
+        const key = document.getElementById('apiKey').value;
+        const resp = await fetch('/api/admin/token', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({api_key: key})});
+        const j = await resp.json();
+        if (j.ok) {
+          localStorage.setItem('admin_token', j.token);
+          localStorage.setItem('server_api_key', key);
+          alert('token saved (demo)');
+        } else {
+          alert('error: ' + JSON.stringify(j));
+        }
+      }
+      document.getElementById('getToken').onclick = getToken;
+
+      async function loadWithdrawals() {
+        const key = localStorage.getItem('server_api_key') || '';
+        if (!key) { return; }
+        const resp = await fetch('/api/admin/withdrawals', {headers: {'X-API-KEY': key}});
+        const j = await resp.json();
+        const ul = document.getElementById('withdrawals');
+        ul.innerHTML = '';
+        if (j.ok) {
+          for (const w of j.withdrawals) {
+            const li = document.createElement('li');
+            li.textContent = `${w.created_at} | ${w.id} | ${w.amount} ${w.currency} -> ${w.to_address} [${w.status}]`;
+            if (w.status === 'pending') {
+              const approve = document.createElement('button');
+              approve.textContent = 'Approve';
+              approve.onclick = async () => {
+                await fetch('/api/admin/process', {method:'POST', headers:{'Content-Type':'application/json','X-API-KEY': key}, body: JSON.stringify({id: w.id, action:'approve'})});
+                loadWithdrawals();
+              };
+              li.appendChild(approve);
+            }
+            ul.appendChild(li);
+          }
+        }
+      }
+      setInterval(loadWithdrawals, 5000);
+    </script>
+  
+<h2>Miners</h2>
+<button id="loadMiners">Load Miners</button>
+<ul id="miners"></ul>
+<h2>Credits</h2>
+<button id="loadCredits">Load Credits</button>
+<ul id="credits"></ul>
+<script>
+  document.getElementById('loadMiners').onclick = async function() {
+    const key = localStorage.getItem('server_api_key') || '';
+    const resp = await fetch(/api/admin/miners, {headers: {'X-API-KEY': key}});
+    const j = await resp.json();
+    const ul = document.getElementById('miners');
+    ul.innerHTML = '';
+    if (j.ok) {
+      for (const m of j.miners) {
+        const li = document.createElement('li');
+        li.textContent = `${m.id} | balance=${m.balance} | shares=${m.shares}`;
+        ul.appendChild(li);
+      }
+    } else { alert('error'); }
+  };
+  document.getElementById('loadCredits').onclick = async function() {
+    const key = localStorage.getItem('server_api_key') || '';
+    const resp = await fetch('/api/admin/credits', {headers: {'X-API-KEY': key}});
+    const j = await resp.json();
+    const ul = document.getElementById('credits');
+    ul.innerHTML = '';
+    if (j.ok) {
+      for (const c of j.credits) {
+        const li = document.createElement('li');
+        li.textContent = `${c.created_at} | ${c.miner_id} | shares=${c.shares} | amount=${c.amount}`;
+        ul.appendChild(li);
+      }
+    } else { alert('error'); }
+  };
+</script>
+
+</body>
+</html>

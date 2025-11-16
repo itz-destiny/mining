@@ -1,0 +1,31 @@
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+*.db
+env/
+venv/
+.env
+.env.*
+*.log
+
+# Editor
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Node / frontend (if any)
+node_modules/
+
+# Docker
+docker-compose.override.yml
+
+# Sensitive
+backend/config.json
+*/config.json
+*/secrets/*

@@ -1,0 +1,16 @@
+
+[Unit]
+Description=Mining PWA Backend (Flask)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/mnt/data/mining_pwa_backend_flask/backend
+Environment=PATH=/mnt/data/mining_pwa_backend_flask/backend/venv/bin
+ExecStart=/mnt/data/mining_pwa_backend_flask/backend/venv/bin/python /mnt/data/mining_pwa_backend_flask/backend/server.py
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

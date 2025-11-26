@@ -1,0 +1,22 @@
+
+name: Auto Changelog
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  changelog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate changelog (simple)
+        run: |
+          git log --pretty=format:'- %s (%an)' $(git describe --tags --abbrev=0 HEAD^)..HEAD > CHANGELOG.md || true
+      - name: Upload changelog artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: changelog
+          path: CHANGELOG.md

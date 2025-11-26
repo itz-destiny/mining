@@ -10,6 +10,8 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from functools import wraps
 import os as _os
+import logging
+from ipaddress import ip_network, ip_address
 import hmac
 import hashlib
 import jwt
@@ -22,8 +24,58 @@ BASE_DIR = os.path.dirname(__file__)
 DB_PATH = os.path.join(BASE_DIR, "data", "withdrawals.db")
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 
-app = Flask(__name__)
-CORS(app)
+# --- Serve frontend static files from /static/... ---
+FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
+FRONTEND_DIR = os.path.abspath(FRONTEND_DIR)
+
+app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path='/static')
+
+# Production logging configuration
+if os.getenv('FLASK_ENV') == 'production':
+    logging.basicConfig(
+        level=logging.WARNING,
+        format='%(asctime)s %(levelname)s %(name)s %(message)s',
+        handlers=[
+            logging.FileHandler('mining_backend.log'),
+            logging.StreamHandler()
+        ]
+    )
+else:
+    logging.basicConfig(level=logging.INFO)
+    
+logger = logging.getLogger('mining_backend')
+
+# Make sure FRONTEND_DIR exists
+if not os.path.exists(FRONTEND_DIR):
+    logger.warning(f"Frontend directory not found: {FRONTEND_DIR}")
+
+# Production error handlers
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({"ok": False, "error": "Not found"}), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    logger.error(f"Internal error: {error}")
+    return jsonify({"ok": False, "error": "Internal server error"}), 500
+
+@app.errorhandler(401)
+def unauthorized(error):
+    return jsonify({"ok": False, "error": "Unauthorized"}), 401
+
+@app.after_request
+def after_request(response):
+    # Security headers
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    if os.getenv('FLASK_ENV') == 'production':
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    return response
+
+# Configure CORS more restrictively by default (change via FRONTEND_ORIGIN env)
+FRONTEND_ORIGIN = os.getenv('FRONTEND_ORIGIN', 'http://localhost:5000')
+CORS(app, origins=[FRONTEND_ORIGIN])
 
 # load environment variables
 load_dotenv()
@@ -31,7 +83,11 @@ load_dotenv()
 # rate limiter (configurable via env)
 use_rl = os.getenv('USE_RATE_LIMIT','true').lower() in ('1','true','yes')
 if use_rl:
-    limiter = Limiter(app, key_func=get_remote_address, default_limits=[f"{os.getenv('RATE_LIMIT_PER_MINUTE','60')} per minute"])
+    limiter = Limiter(
+        app=app,
+        key_func=get_remote_address,
+        default_limits=[f"{os.getenv('RATE_LIMIT_PER_MINUTE','60')} per minute"]
+    )
 else:
     limiter = None
 
@@ -69,7 +125,9 @@ def get_db():
     return db
 
 def init_db():
-    db = get_db()
+    # Create connection directly (not using get_db() which requires Flask context)
+    db = sqlite3.connect(DB_PATH, check_same_thread=False)
+    db.row_factory = sqlite3.Row
     cur = db.cursor()
     cur.execute("""
     CREATE TABLE IF NOT EXISTS withdrawals (
@@ -101,9 +159,17 @@ def init_db():
         created_at INTEGER
     )
     """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS psbts (
+        id TEXT PRIMARY KEY,
+        psbt TEXT,
+        status TEXT,
+        txid TEXT,
+        created_at INTEGER
+    )
+    """)
     db.commit()
-
-    db.commit()
+    db.close()
 
 @app.teardown_appcontext
 def close_connection(exception):
@@ -175,16 +241,26 @@ def api_stream():
     # Server-Sent Events (SSE) streaming endpoint for realtime updates
     def event_stream():
         while True:
-            time.sleep(1)
-            with mining_lock:
-                data = {
-                    "running": mining_state["running"],
-                    "hashrate": mining_state["hashrate"],
-                    "balance": round(mining_state["balance"], 8),
-                    "ts": int(time.time())
-                }
-            yield f"data: {json.dumps(data)}\\n\\n"
-    return Response(event_stream(), mimetype="text/event-stream")
+            try:
+                time.sleep(1)
+                with mining_lock:
+                    data = {
+                        "running": mining_state["running"],
+                        "hashrate": mining_state["hashrate"],
+                        "balance": round(mining_state["balance"], 8),
+                        "ts": int(time.time())
+                    }
+                yield f"data: {json.dumps(data)}\n\n"
+            except GeneratorExit:
+                break
+            except Exception as e:
+                logger.error(f"SSE stream error: {e}")
+                break
+    
+    response = Response(event_stream(), mimetype="text/event-stream")
+    response.headers['Cache-Control'] = 'no-cache'
+    response.headers['X-Accel-Buffering'] = 'no'
+    return response
 
 @app.route("/api/start", methods=["POST"])
 def api_start():
@@ -256,11 +332,27 @@ def require_api_key(req=None):
         abort(401, "invalid api key")
 
 
-@app.route("/api/admin/token", methods=["POST"])
-
+ADMIN_IP_ALLOWLIST = os.getenv('ADMIN_IP_ALLOWLIST','').split(',')
 def admin_protected(f):
     @wraps(f)
     def wrapped(*args, **kwargs):
+        # optional admin IP allowlist
+        remote = request.remote_addr
+        if ADMIN_IP_ALLOWLIST and any([ip for ip in ADMIN_IP_ALLOWLIST if ip]):
+            allowed = False
+            for spec in ADMIN_IP_ALLOWLIST:
+                try:
+                    if '/' in spec:
+                        if ip_address(remote) in ip_network(spec):
+                            allowed = True; break
+                    else:
+                        if remote == spec:
+                            allowed = True; break
+                except Exception:
+                    pass
+            if not allowed:
+                return jsonify({'ok': False, 'error': 'admin access denied (ip)'}), 403
+
         # check X-API-KEY header or MINING_SERVER_API_KEY env var
         provided = request.headers.get("X-API-KEY") or request.args.get("api_key")
         env_key = os.getenv("MINING_SERVER_API_KEY") or config.get("server_api_key")
@@ -279,7 +371,7 @@ def api_report_share():
     Authentication: Requests must include header 'X-REPORT-SIG' which is HMAC-SHA256 of the raw body using REPORT_SHARED_SECRET.
     """
     # Verify HMAC signature to ensure reports are authentic
-    shared_secret = os.getenv('REPORT_SHARED_SECRET') or config.get('report_shared_secret') or ''
+    shared_secret = os.getenv('REPORT_SHARED_SECRET') or config.get('report_shared_secret') or config.get('stratum_async', {}).get('report_secret') or ''
     sig_header = request.headers.get('X-REPORT-SIG') or request.headers.get('X-SIGNATURE') or ''
     raw = request.get_data() or b''
     if not shared_secret:
@@ -341,13 +433,13 @@ def api_admin_process():
     require_api_key(request)
     data = request.get_json() or {}
     wid = data.get("id")
-    action = data.get("action")  # 'approve' or 'reject'
-    if not wid or action not in ("approve","reject"):
+    action = data.get("action")  # 'approve', 'reject', or 'retry'
+    if not wid or action not in ("approve","reject","retry"):
         return jsonify({"ok": False, "error": "invalid"}), 400
     db = get_db()
     cur = db.cursor()
-    if action == "approve":
-        # attempt payment when admin approves
+    if action == "approve" or action == "retry":
+        # attempt payment when admin approves or retries
         cur.execute("SELECT currency, amount, to_address FROM withdrawals WHERE id=?", (wid,))
         row = cur.fetchone()
         if not row:
@@ -358,6 +450,9 @@ def api_admin_process():
             txid = result.get("txid", "")
             cur.execute("UPDATE withdrawals SET status=?, txid=? WHERE id=?", ("completed", txid, wid))
         else:
+            # Store error message for debugging
+            error_msg = result.get("error", "Payment processing failed")
+            logger.error(f"Withdrawal {wid} failed: {error_msg}")
             cur.execute("UPDATE withdrawals SET status=? WHERE id=?", ("error", wid))
     else:
         cur.execute("UPDATE withdrawals SET status=? WHERE id=?", ("rejected", wid))
@@ -366,8 +461,38 @@ def api_admin_process():
 
 # --- Serve a simple static status page for testing ---
 
+@app.route("/api/admin/token", methods=["POST"])
+def api_admin_token():
+    """
+    Generate a JWT token for admin authentication.
+    Body: { "api_key": "..." }
+    Returns: { "ok": True, "token": "..." }
+    """
+    data = request.get_json() or {}
+    provided_key = data.get("api_key") or request.headers.get("X-API-KEY")
+    env_key = os.getenv("MINING_SERVER_API_KEY") or config.get("server_api_key")
+    
+    if not provided_key or provided_key != env_key:
+        return jsonify({"ok": False, "error": "invalid api key"}), 401
+    
+    # Generate JWT token
+    jwt_secret = os.getenv("JWT_SECRET") or config.get("server_api_key", "default_secret")
+    payload = {
+        "sub": "admin",
+        "iat": int(time.time()),
+        "exp": int(time.time()) + (7 * 24 * 60 * 60)  # 7 days
+    }
+    token = jwt.encode(payload, jwt_secret, algorithm="HS256")
+    return jsonify({"ok": True, "token": token})
+
 @app.route("/api/admin/miners", methods=["GET"])
 @admin_protected
+def api_admin_miners():
+    db = get_db()
+    cur = db.cursor()
+    cur.execute("SELECT * FROM miners ORDER BY created_at DESC")
+    rows = [dict(r) for r in cur.fetchall()]
+    return jsonify({"ok": True, "miners": rows})
 
 @app.route("/api/admin/batch_payout", methods=["POST"])
 @admin_protected
@@ -442,13 +567,6 @@ def api_admin_get_psbt(psbt_id):
         return jsonify({"ok": False, "error": "not found"}), 404
     return jsonify({"ok": True, "psbt": row["psbt"], "status": row["status"], "txid": row["txid"], "created_at": row["created_at"]})
 
-def api_admin_miners():
-    db = get_db()
-    cur = db.cursor()
-    cur.execute("SELECT * FROM miners ORDER BY created_at DESC")
-    rows = [dict(r) for r in cur.fetchall()]
-    return jsonify({"ok": True, "miners": rows})
-
 @app.route("/api/admin/credits", methods=["GET"])
 @admin_protected
 def api_admin_credits():
@@ -460,17 +578,8 @@ def api_admin_credits():
 
 @app.route("/")
 def index():
-    return jsonify({"ok": True, "msg": "Mining backend with SSE running"})
-
-
-# --- Serve frontend static files from /static/... ---
-FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
-FRONTEND_DIR = os.path.abspath(FRONTEND_DIR)
-
-@app.route("/static/<path:filename>")
-def static_files(filename):
-    # Serve files from the frontend directory
-    return send_from_directory(FRONTEND_DIR, filename)
+    # Serve index.html by default
+    return send_from_directory(FRONTEND_DIR, "index.html")
 
 @app.route("/index.html")
 def frontend_index():

@@ -1,53 +1,211 @@
 <!doctype html>
-<html>
-  <head><meta charset="utf-8"><title>PSBT Viewer</title></head>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="description" content="PSBT Viewer - Offline Bitcoin Transaction Signing Interface" />
+    <link rel="stylesheet" href="/static/styles.css">
+    <title>PSBT Viewer - Offline Transaction Signing</title>
+    <style>
+      .psbt-viewer {
+        background: #1e1e1e;
+        border-radius: var(--radius);
+        padding: 20px;
+        margin-top: 20px;
+      }
+      
+      .psbt-viewer pre {
+        background: #1e1e1e;
+        color: #d4d4d4;
+        padding: 20px;
+        border-radius: var(--radius);
+        overflow-x: auto;
+        font-size: 12px;
+        line-height: 1.6;
+        margin: 0;
+        border: 1px solid #3e3e3e;
+      }
+      
+      .psbt-actions {
+        display: flex;
+        gap: 10px;
+        margin-top: 15px;
+        flex-wrap: wrap;
+      }
+    </style>
+  </head>
   <body>
-    <h1>PSBTs</h1>
-    <label>Server API Key: <input id="apiKey" placeholder="server api key"></label>
-    <button id="loadPsbtList">Load PSBT List</button>
-    <ul id="psbts"></ul>
-    <div id="viewer"></div>
+    <div class="container">
+      <div class="text-center mb-3">
+        <h1>📄 PSBT Viewer</h1>
+        <p class="text-muted">Partially Signed Bitcoin Transaction management</p>
+      </div>
+      
+      <div class="nav-links">
+        <a href="/admin.html" class="nav-link">🔧 Admin Panel</a>
+        <a href="/index.html" class="nav-link">📊 Dashboard</a>
+      </div>
+      
+      <div class="api-key-section">
+        <h3>🔐 Authentication</h3>
+        <div class="form-group">
+          <label for="apiKey">Server API Key</label>
+          <input id="apiKey" type="text" placeholder="Enter your API key" autocomplete="off">
+          <small class="text-muted">Required to view and manage PSBTs</small>
+        </div>
+        <button id="loadPsbtList" class="btn">📥 Load PSBT List</button>
+      </div>
+      
+      <div class="card">
+        <h2>📋 PSBTs</h2>
+        <ul id="psbts"></ul>
+      </div>
+      
+      <div id="viewer" class="card" style="display: none;">
+        <h2>🔍 PSBT Details</h2>
+        <div class="psbt-viewer">
+          <pre id="psbtContent"></pre>
+        </div>
+        <div class="psbt-actions">
+          <a id="downloadPsbt" class="btn btn-success" download>💾 Download PSBT</a>
+          <button id="copyPsbt" class="btn">📋 Copy to Clipboard</button>
+        </div>
+      </div>
+    </div>
+
     <script>
+      // Load API key from localStorage
+      window.addEventListener('DOMContentLoaded', function() {
+        const savedKey = localStorage.getItem('server_api_key');
+        if (savedKey) {
+          document.getElementById('apiKey').value = savedKey;
+        }
+      });
+      
       document.getElementById('loadPsbtList').onclick = async function() {
-        const key = document.getElementById('apiKey').value;
-        const resp = await fetch('/api/admin/psbts', {headers: {'X-API-KEY': key}});
-        const j = await resp.json();
-        const ul = document.getElementById('psbts');
-        ul.innerHTML = '';
-        if (j.ok) {
-          for (const p of j.psbts) {
-            const li = document.createElement('li');
-            li.textContent = `${p.created_at} | ${p.id} | ${p.status} | tx=${p.txid}`;
-            const btn = document.createElement('button');
-            btn.textContent = 'View';
-            btn.onclick = async () => {
-              const resp2 = await fetch('/api/admin/get_psbt/' + p.id, {headers: {'X-API-KEY': key}});
-              const j2 = await resp2.json();
-              if (j2.ok) {
-                // show base64 psbt and provide download
-                const pre = document.createElement('pre');
-                pre.textContent = j2.psbt;
-                const dl = document.createElement('a');
-                const blob = new Blob([j2.psbt], {type: 'text/plain'});
-                dl.href = URL.createObjectURL(blob);
-                dl.download = p.id + '.psbt.txt';
-                dl.textContent = 'Download PSBT';
-                const viewer = document.getElementById('viewer');
-                viewer.innerHTML = '';
-                viewer.appendChild(pre);
-                viewer.appendChild(document.createElement('br'));
-                viewer.appendChild(dl);
-              } else {
-                alert('error fetching psbt');
+        const key = document.getElementById('apiKey').value.trim() || localStorage.getItem('server_api_key') || '';
+        if (!key) {
+          showAlert('Please enter an API key', 'error');
+          return;
+        }
+        
+        const btn = this;
+        const originalText = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Loading...';
+        
+        try {
+          const resp = await fetch('/api/admin/psbts', {headers: {'X-API-KEY': key}});
+          const j = await resp.json();
+          const ul = document.getElementById('psbts');
+          ul.innerHTML = '';
+          
+          if (j.ok) {
+            if (j.psbts && j.psbts.length > 0) {
+              for (const p of j.psbts) {
+                const li = document.createElement('li');
+                
+                const info = document.createElement('div');
+                const date = new Date(p.created_at * 1000).toLocaleString();
+                info.innerHTML = `
+                  <div><strong>ID:</strong> ${p.id.substring(0, 20)}...</div>
+                  <div><strong>Status:</strong> <span class="status-badge status-${p.status}">${p.status.toUpperCase()}</span></div>
+                  <div class="text-muted">Created: ${date}</div>
+                  ${p.txid ? `<div class="text-muted"><strong>TXID:</strong> <code>${p.txid.substring(0, 20)}...</code></div>` : ''}
+                `;
+                
+                const btn = document.createElement('button');
+                btn.className = 'btn btn-sm';
+                btn.textContent = '👁️ View PSBT';
+                const psbtId = p.id;
+                const apiKey = key;
+                btn.onclick = async () => {
+                  btn.disabled = true;
+                  btn.innerHTML = '<span class="spinner"></span>';
+                  
+                  try {
+                    const resp2 = await fetch('/api/admin/get_psbt/' + psbtId, {headers: {'X-API-KEY': apiKey}});
+                    const j2 = await resp2.json();
+                    
+                    if (j2.ok) {
+                      const viewer = document.getElementById('viewer');
+                      const content = document.getElementById('psbtContent');
+                      const download = document.getElementById('downloadPsbt');
+                      
+                      content.textContent = j2.psbt;
+                      
+                      const blob = new Blob([j2.psbt], {type: 'text/plain'});
+                      download.href = URL.createObjectURL(blob);
+                      download.download = psbtId + '.psbt.txt';
+                      
+                      viewer.style.display = 'block';
+                      viewer.scrollIntoView({ behavior: 'smooth' });
+                      
+                      showAlert('PSBT loaded successfully', 'success');
+                    } else {
+                      showAlert('Error fetching PSBT: ' + (j2.error || 'Unknown error'), 'error');
+                    }
+                  } catch (err) {
+                    showAlert('Error: ' + err.message, 'error');
+                  } finally {
+                    btn.disabled = false;
+                    btn.innerHTML = '👁️ View PSBT';
+                  }
+                };
+                
+                li.appendChild(info);
+                li.appendChild(btn);
+                ul.appendChild(li);
               }
-            };
-            li.appendChild(btn);
-            ul.appendChild(li);
+            } else {
+              ul.innerHTML = '<li class="empty">No PSBTs found. PSBTs are created when batch payouts are generated.</li>';
+            }
+          } else {
+            showAlert('Error loading PSBTs: ' + (j.error || 'Unknown error'), 'error');
           }
-        } else {
-          alert('error');
+        } catch (err) {
+          showAlert('Error: ' + err.message, 'error');
+        } finally {
+          btn.disabled = false;
+          btn.innerHTML = originalText;
         }
       };
+      
+      // Copy to clipboard
+      document.getElementById('copyPsbt').onclick = function() {
+        const content = document.getElementById('psbtContent').textContent;
+        navigator.clipboard.writeText(content).then(() => {
+          showAlert('PSBT copied to clipboard', 'success');
+        }).catch(err => {
+          showAlert('Failed to copy: ' + err.message, 'error');
+        });
+      };
+      
+      // Alert system
+      function showAlert(message, type = 'info') {
+        const existing = document.querySelector('.alert');
+        if (existing) existing.remove();
+        
+        const alert = document.createElement('div');
+        alert.className = `alert alert-${type}`;
+        alert.innerHTML = `
+          <span>${getAlertIcon(type)}</span>
+          <span>${message}</span>
+          <button onclick="this.parentElement.remove()" style="margin-left: auto; background: none; border: none; font-size: 20px; cursor: pointer; opacity: 0.7;">&times;</button>
+        `;
+        
+        const container = document.querySelector('.container');
+        container.insertBefore(alert, container.firstChild);
+        
+        setTimeout(() => {
+          if (alert.parentElement) alert.remove();
+        }, 5000);
+      }
+      
+      function getAlertIcon(type) {
+        const icons = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' };
+        return icons[type] || icons.info;
+      }
     </script>
   </body>
 </html>

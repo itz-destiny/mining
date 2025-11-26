@@ -1,94 +1,363 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
-<link rel="manifest" href="/static/manifest.json"><meta charset="utf-8"/><title>Admin - Mining PWA</title></head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <meta name="description" content="Admin Panel - Mining Pool Management Interface" />
+    <link rel="manifest" href="/static/manifest.json">
+    <link rel="stylesheet" href="/static/styles.css">
+    <title>Admin Panel - Mining Pool Management</title>
+  </head>
   <body>
-    <h1>Admin Interface</h1>
-<p><a href="/psbt.html">PSBT Viewer</a></p>
-    <div>
-      <label>Server API Key: <input id="apiKey" placeholder="change_this_server_api_key"></label>
-      <button id="getToken">Get Token</button>
+    <div class="container">
+      <div class="text-center mb-3">
+        <h1>🔧 Admin Panel</h1>
+        <p class="text-muted">Pool management and monitoring dashboard</p>
+      </div>
+      
+      <div class="nav-links">
+        <a href="/index.html" class="nav-link">📊 Dashboard</a>
+        <a href="/psbt.html" class="nav-link">📄 PSBT Viewer</a>
+      </div>
+      
+      <div class="api-key-section">
+        <h3>🔐 Authentication</h3>
+        <div class="form-group">
+          <label for="apiKey">Server API Key</label>
+          <input id="apiKey" type="text" placeholder="Enter your API key" autocomplete="off">
+          <small class="text-muted">Required for admin operations</small>
+        </div>
+        <button id="getToken" class="btn">🔑 Get Token</button>
+        <div id="tokenStatus" class="mt-2"></div>
+      </div>
+
+      <div class="card">
+        <div class="section-header">
+          <h2>💸 Withdrawals</h2>
+          <button id="refreshWithdrawals" class="btn btn-sm">🔄 Refresh</button>
+        </div>
+        <ul id="withdrawals"></ul>
+      </div>
+
+      <div class="card">
+        <div class="section-header">
+          <h2>⛏️ Miners</h2>
+          <button id="loadMiners" class="btn btn-sm">📥 Load Miners</button>
+        </div>
+        <ul id="miners"></ul>
+      </div>
+      
+      <div class="card">
+        <div class="section-header">
+          <h2>💰 Credits</h2>
+          <button id="loadCredits" class="btn btn-sm">📥 Load Credits</button>
+        </div>
+        <ul id="credits"></ul>
+      </div>
     </div>
-    <h2>Withdrawals</h2>
-    <ul id="withdrawals"></ul>
+
     <script>
-      async function getToken() {
-        const key = document.getElementById('apiKey').value;
-        const resp = await fetch('/api/admin/token', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({api_key: key})});
-        const j = await resp.json();
-        if (j.ok) {
-          localStorage.setItem('admin_token', j.token);
-          localStorage.setItem('server_api_key', key);
-          alert('token saved (demo)');
-        } else {
-          alert('error: ' + JSON.stringify(j));
+      // Load API key from localStorage
+      window.addEventListener('DOMContentLoaded', function() {
+        const savedKey = localStorage.getItem('server_api_key');
+        if (savedKey) {
+          document.getElementById('apiKey').value = savedKey;
         }
-      }
-      document.getElementById('getToken').onclick = getToken;
+      });
 
-      async function loadWithdrawals() {
-        const key = localStorage.getItem('server_api_key') || '';
-        if (!key) { return; }
-        const resp = await fetch('/api/admin/withdrawals', {headers: {'X-API-KEY': key}});
-        const j = await resp.json();
-        const ul = document.getElementById('withdrawals');
-        ul.innerHTML = '';
-        if (j.ok) {
-          for (const w of j.withdrawals) {
-            const li = document.createElement('li');
-            li.textContent = `${w.created_at} | ${w.id} | ${w.amount} ${w.currency} -> ${w.to_address} [${w.status}]`;
-            if (w.status === 'pending') {
-              const approve = document.createElement('button');
-              approve.textContent = 'Approve';
-              approve.onclick = async () => {
-                await fetch('/api/admin/process', {method:'POST', headers:{'Content-Type':'application/json','X-API-KEY': key}, body: JSON.stringify({id: w.id, action:'approve'})});
-                loadWithdrawals();
-              };
-              li.appendChild(approve);
-            }
-            ul.appendChild(li);
+      // Get Token
+      document.getElementById('getToken').onclick = async function() {
+        const key = document.getElementById('apiKey').value.trim();
+        if (!key) {
+          showAlert('Please enter an API key', 'error');
+          return;
+        }
+        
+        const btn = this;
+        const originalText = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Generating...';
+        
+        try {
+          const resp = await fetch('/api/admin/token', {
+            method:'POST', 
+            headers:{'Content-Type':'application/json'}, 
+            body: JSON.stringify({api_key: key})
+          });
+          const j = await resp.json();
+          
+          if (j.ok) {
+            localStorage.setItem('admin_token', j.token);
+            localStorage.setItem('server_api_key', key);
+            showAlert('Token generated and saved successfully', 'success');
+            document.getElementById('tokenStatus').innerHTML = '<span class="text-muted">✓ Token saved</span>';
+          } else {
+            showAlert('Error: ' + (j.error || 'Failed to generate token'), 'error');
           }
+        } catch (err) {
+          showAlert('Error: ' + err.message, 'error');
+        } finally {
+          btn.disabled = false;
+          btn.innerHTML = originalText;
+        }
+      };
+
+      // Load Withdrawals
+      async function loadWithdrawals() {
+        const key = localStorage.getItem('server_api_key') || document.getElementById('apiKey').value.trim();
+        if (!key) {
+          showAlert('Please enter and save API key first', 'warning');
+          return;
+        }
+        
+        try {
+          const resp = await fetch('/api/admin/withdrawals', {headers: {'X-API-KEY': key}});
+          const j = await resp.json();
+          const ul = document.getElementById('withdrawals');
+          ul.innerHTML = '';
+          
+          if (j.ok && j.withdrawals && j.withdrawals.length > 0) {
+            for (const w of j.withdrawals) {
+              const li = document.createElement('li');
+              li.className = 'withdrawal-item';
+              
+              // Format amount properly (handle scientific notation)
+              const amount = typeof w.amount === 'string' && w.amount.includes('e') 
+                ? parseFloat(w.amount).toFixed(8) 
+                : parseFloat(w.amount).toFixed(8);
+              
+              const info = document.createElement('div');
+              info.className = 'withdrawal-info';
+              
+              // Error message for failed withdrawals
+              let errorNote = '';
+              if (w.status === 'error') {
+                const errorHint = w.error_message 
+                  ? `Error: ${w.error_message}` 
+                  : 'Payment processing failed. Check wallet configuration and server logs.';
+                errorNote = `<div class="error-note">⚠️ ${errorHint}</div>`;
+              }
+              
+              info.innerHTML = `
+                <div class="withdrawal-header">
+                  <div class="withdrawal-amount"><strong>${amount} ${w.currency}</strong></div>
+                  <span class="status-badge status-${w.status}">${w.status.toUpperCase()}</span>
+                </div>
+                ${errorNote}
+                <div class="withdrawal-details">
+                  <div class="detail-row">
+                    <span class="detail-label">ID:</span>
+                    <span class="detail-value">${w.id.substring(0, 12)}...</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="detail-label">To:</span>
+                    <span class="detail-value address-value">${w.to_address}</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="detail-label">Created:</span>
+                    <span class="detail-value">${new Date(w.created_at * 1000).toLocaleString()}</span>
+                  </div>
+                  ${w.txid ? `<div class="detail-row">
+                    <span class="detail-label">TX:</span>
+                    <span class="detail-value"><code>${w.txid.substring(0, 16)}...</code></span>
+                  </div>` : ''}
+                </div>
+              `;
+              
+              li.appendChild(info);
+              
+              // Show retry button for errors, approve/reject for pending
+              if (w.status === 'error') {
+                const retryBtn = document.createElement('button');
+                retryBtn.className = 'btn btn-warning btn-sm';
+                retryBtn.textContent = '🔄 Retry';
+                retryBtn.onclick = async () => {
+                  retryBtn.disabled = true;
+                  retryBtn.textContent = '⏳ Processing...';
+                  try {
+                    await fetch('/api/admin/process', {
+                      method:'POST', 
+                      headers:{'Content-Type':'application/json','X-API-KEY': key}, 
+                      body: JSON.stringify({id: w.id, action:'retry'})
+                    });
+                    loadWithdrawals();
+                  } catch (err) {
+                    showAlert('Error retrying: ' + err.message, 'error');
+                    retryBtn.disabled = false;
+                    retryBtn.textContent = '🔄 Retry';
+                  }
+                };
+                const actions = document.createElement('div');
+                actions.className = 'withdrawal-actions';
+                actions.appendChild(retryBtn);
+                li.appendChild(actions);
+              } else if (w.status === 'pending') {
+                const actions = document.createElement('div');
+                actions.className = 'withdrawal-actions';
+                
+                const approve = document.createElement('button');
+                approve.className = 'btn btn-success btn-sm';
+                approve.textContent = '✓ Approve';
+                approve.onclick = async () => {
+                  approve.disabled = true;
+                  await fetch('/api/admin/process', {
+                    method:'POST', 
+                    headers:{'Content-Type':'application/json','X-API-KEY': key}, 
+                    body: JSON.stringify({id: w.id, action:'approve'})
+                  });
+                  loadWithdrawals();
+                };
+                
+                const reject = document.createElement('button');
+                reject.className = 'btn btn-danger btn-sm';
+                reject.textContent = '✗ Reject';
+                reject.onclick = async () => {
+                  reject.disabled = true;
+                  await fetch('/api/admin/process', {
+                    method:'POST', 
+                    headers:{'Content-Type':'application/json','X-API-KEY': key}, 
+                    body: JSON.stringify({id: w.id, action:'reject'})
+                  });
+                  loadWithdrawals();
+                };
+                
+                actions.appendChild(approve);
+                actions.appendChild(reject);
+                li.appendChild(actions);
+              }
+              
+              ul.appendChild(li);
+            }
+          } else {
+            ul.innerHTML = '<li class="empty">No withdrawals found</li>';
+          }
+        } catch (err) {
+          showAlert('Error loading withdrawals: ' + err.message, 'error');
         }
       }
-      setInterval(loadWithdrawals, 5000);
-    </script>
-  
-<h2>Miners</h2>
-<button id="loadMiners">Load Miners</button>
-<ul id="miners"></ul>
-<h2>Credits</h2>
-<button id="loadCredits">Load Credits</button>
-<ul id="credits"></ul>
-<script>
-  document.getElementById('loadMiners').onclick = async function() {
-    const key = localStorage.getItem('server_api_key') || '';
-    const resp = await fetch(/api/admin/miners, {headers: {'X-API-KEY': key}});
-    const j = await resp.json();
-    const ul = document.getElementById('miners');
-    ul.innerHTML = '';
-    if (j.ok) {
-      for (const m of j.miners) {
-        const li = document.createElement('li');
-        li.textContent = `${m.id} | balance=${m.balance} | shares=${m.shares}`;
-        ul.appendChild(li);
-      }
-    } else { alert('error'); }
-  };
-  document.getElementById('loadCredits').onclick = async function() {
-    const key = localStorage.getItem('server_api_key') || '';
-    const resp = await fetch('/api/admin/credits', {headers: {'X-API-KEY': key}});
-    const j = await resp.json();
-    const ul = document.getElementById('credits');
-    ul.innerHTML = '';
-    if (j.ok) {
-      for (const c of j.credits) {
-        const li = document.createElement('li');
-        li.textContent = `${c.created_at} | ${c.miner_id} | shares=${c.shares} | amount=${c.amount}`;
-        ul.appendChild(li);
-      }
-    } else { alert('error'); }
-  };
-</script>
 
-</body>
+      document.getElementById('refreshWithdrawals').onclick = loadWithdrawals;
+      setInterval(loadWithdrawals, 10000); // Auto-refresh every 10 seconds
+
+      // Load Miners
+      document.getElementById('loadMiners').onclick = async function() {
+        const key = localStorage.getItem('server_api_key') || document.getElementById('apiKey').value.trim();
+        if (!key) {
+          showAlert('Please enter and save API key first', 'warning');
+          return;
+        }
+        
+        const btn = this;
+        const originalText = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Loading...';
+        
+        try {
+          const resp = await fetch('/api/admin/miners', {headers: {'X-API-KEY': key}});
+          const j = await resp.json();
+          const ul = document.getElementById('miners');
+          ul.innerHTML = '';
+          
+          if (j.ok) {
+            if (j.miners && j.miners.length > 0) {
+              for (const m of j.miners) {
+                const li = document.createElement('li');
+                li.innerHTML = `
+                  <div>
+                    <div><strong>${m.id}</strong></div>
+                    <div class="text-muted">Balance: <strong>${parseFloat(m.balance || 0).toFixed(8)}</strong> BTC</div>
+                    <div class="text-muted">Shares: <strong>${m.shares || 0}</strong></div>
+                    <div class="text-muted">Created: ${m.created_at ? new Date(m.created_at * 1000).toLocaleString() : 'N/A'}</div>
+                  </div>
+                `;
+                ul.appendChild(li);
+              }
+            } else {
+              ul.innerHTML = '<li class="empty">No miners found. Miners are created when shares are reported via /api/report_share. Use the worker simulator to create test data.</li>';
+            }
+          } else {
+            showAlert('Error: ' + (j.error || 'Failed to load miners'), 'error');
+          }
+        } catch (err) {
+          showAlert('Error: ' + err.message, 'error');
+        } finally {
+          btn.disabled = false;
+          btn.innerHTML = originalText;
+        }
+      };
+
+      // Load Credits
+      document.getElementById('loadCredits').onclick = async function() {
+        const key = localStorage.getItem('server_api_key') || document.getElementById('apiKey').value.trim();
+        if (!key) {
+          showAlert('Please enter and save API key first', 'warning');
+          return;
+        }
+        
+        const btn = this;
+        const originalText = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Loading...';
+        
+        try {
+          const resp = await fetch('/api/admin/credits', {headers: {'X-API-KEY': key}});
+          const j = await resp.json();
+          const ul = document.getElementById('credits');
+          ul.innerHTML = '';
+          
+          if (j.ok) {
+            if (j.credits && j.credits.length > 0) {
+              for (const c of j.credits) {
+                const li = document.createElement('li');
+                li.innerHTML = `
+                  <div>
+                    <div><strong>Miner: ${c.miner_id}</strong></div>
+                    <div class="text-muted">Shares: <strong>${c.shares || 0}</strong></div>
+                    <div class="text-muted">Amount: <strong>${parseFloat(c.amount || 0).toFixed(8)}</strong> BTC</div>
+                    <div class="text-muted">Date: ${new Date(c.created_at * 1000).toLocaleString()}</div>
+                  </div>
+                `;
+                ul.appendChild(li);
+              }
+            } else {
+              ul.innerHTML = '<li class="empty">No credits found. Credits are created when shares are reported. Use the worker simulator to create test data.</li>';
+            }
+          } else {
+            showAlert('Error: ' + (j.error || 'Failed to load credits'), 'error');
+          }
+        } catch (err) {
+          showAlert('Error: ' + err.message, 'error');
+        } finally {
+          btn.disabled = false;
+          btn.innerHTML = originalText;
+        }
+      };
+
+      // Alert system
+      function showAlert(message, type = 'info') {
+        const existing = document.querySelector('.alert');
+        if (existing) existing.remove();
+        
+        const alert = document.createElement('div');
+        alert.className = `alert alert-${type}`;
+        alert.innerHTML = `
+          <span>${getAlertIcon(type)}</span>
+          <span>${message}</span>
+          <button onclick="this.parentElement.remove()" style="margin-left: auto; background: none; border: none; font-size: 20px; cursor: pointer; opacity: 0.7;">&times;</button>
+        `;
+        
+        const container = document.querySelector('.container');
+        container.insertBefore(alert, container.firstChild);
+        
+        setTimeout(() => {
+          if (alert.parentElement) alert.remove();
+        }, 5000);
+      }
+      
+      function getAlertIcon(type) {
+        const icons = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' };
+        return icons[type] || icons.info;
+      }
+    </script>
+  </body>
 </html>

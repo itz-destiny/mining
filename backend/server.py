@@ -25,8 +25,23 @@ DB_PATH = os.path.join(BASE_DIR, "data", "withdrawals.db")
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 
 # --- Serve frontend static files from /static/... ---
-FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
-FRONTEND_DIR = os.path.abspath(FRONTEND_DIR)
+# Try multiple paths: Docker (/frontend), local development (../frontend), or current dir
+FRONTEND_DIR = None
+possible_paths = [
+    "/frontend",  # Docker/Railway path
+    os.path.join(os.path.dirname(__file__), "..", "frontend"),  # Local development
+    os.path.join(os.path.dirname(__file__), "frontend"),  # Alternative local path
+]
+
+for path in possible_paths:
+    abs_path = os.path.abspath(path)
+    if os.path.exists(abs_path):
+        FRONTEND_DIR = abs_path
+        break
+
+if FRONTEND_DIR is None:
+    # Fallback to first path and let warning show
+    FRONTEND_DIR = os.path.abspath(possible_paths[0])
 
 app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path='/static')
 
@@ -603,8 +618,11 @@ if __name__ == "__main__":
         config["server_api_key"] = env_key
         with open(CONFIG_PATH, "w") as f:
             json.dump(config, f, indent=2)
-    print("Starting Flask mining backend on http://127.0.0.1:5000")
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    # Use PORT environment variable (Railway, Heroku, etc.) or default to 5000
+    port = int(os.getenv('PORT', 5000))
+    debug = os.getenv('FLASK_ENV') != 'production'
+    print(f"Starting Flask mining backend on http://0.0.0.0:{port}")
+    app.run(debug=debug, host="0.0.0.0", port=port)
 
 
 # --- User auth (JWT) helper functions ---

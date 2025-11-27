@@ -1,0 +1,23 @@
+# Files to ignore when deploying to Railway
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.env
+.env.local
+*.log
+.git/
+.gitignore
+README.md
+*.md
+docs/
+node_modules/
+.vscode/
+.idea/
+

@@ -38,9 +38,12 @@ git push origin main
    JWT_SECRET=your_jwt_secret_here
    REPORT_SHARED_SECRET=your_hmac_secret_here
    MINING_PAYOUT_RATE_PER_SHARE=0.00000001
+   INITIAL_HASHRATE=1000000000000000
    FLASK_ENV=production
    PORT=5000
    ```
+
+   **Important:** `INITIAL_HASHRATE=1000000000000000` sets hashrate to 1000 Th/s
 
    **Generate secure keys:**
    ```bash

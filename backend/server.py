@@ -193,9 +193,19 @@ def close_connection(exception):
         db.close()
 
 # --- Mining simulation ---
+# Allow hashrate to be set via environment variable or config
+initial_hashrate = os.getenv('INITIAL_HASHRATE')
+if initial_hashrate:
+    try:
+        initial_hashrate = float(initial_hashrate)
+    except:
+        initial_hashrate = config.get("initial_hashrate", 800)
+else:
+    initial_hashrate = config.get("initial_hashrate", 800)
+
 mining_state = {
     "running": False,
-    "hashrate": config.get("initial_hashrate", 800),
+    "hashrate": initial_hashrate,
     "balance": 0.0,
     "last_update": time.time()
 }
